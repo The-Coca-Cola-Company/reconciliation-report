@@ -202,6 +202,7 @@ table_mappings = [
 session_email = boto3.Session(profile_name='CCNA_INTSRVC_NonProd_INT_AppAdmin', region_name='us-west-2')
 client_email = session_email.client('ses')
 SENDER = "no-reply@coca-cola.com"
+#RECIPIENT = "vvempati@coca-cola.com"
 RECIPIENT = "cgdatafabricsupport@coca-cola.com"
 CHARSET = "UTF-8"
  
@@ -301,7 +302,7 @@ def process_table(table_mapping):
                         )
                     items = response.get('Items', [])
                     if name in ["Customer360Hierarchy", "Customer360Outlet"]:
-                        items = [item for item in items if item.get('c360DelFlag') == 'A'] 
+                        items = [item for item in items if item.get('c360DelFlag') == 'A'] #and not str(item.get('uniqueId', '')).upper().endswith('UNMATCHED')]
                     df_record.extend(items)
                     while 'LastEvaluatedKey' in response:
                         response = datafabric_table.query(
@@ -313,7 +314,8 @@ def process_table(table_mapping):
                         )
                         items = response.get('Items', [])
                         if name in ["Customer360Hierarchy", "Customer360Outlet"]:
-                            items = [item for item in items if item.get('c360DelFlag') == 'A']
+                            items = [item for item in items if item.get('c360DelFlag') == 'A']#and not str(item.get('uniqueId', '')).upper().endswith('UNMATCHED')]
+                        df_record.extend(items)
             print(f"[DEBUG] Fetched {len(df_record)} records from DynamoDB for {name}.")
             df_record_count_last_24hrs = len(df_record)
         except Exception as e:
@@ -481,8 +483,8 @@ subject_status = "GREEN"
 error_occurred = False
 main_table_statuses = []
 
-#Adjust max_workers as needed if system lags or stuck while running.
-with concurrent.futures.ThreadPoolExecutor(max_workers=64) as executor:
+# This block must be present!
+with concurrent.futures.ThreadPoolExecutor(max_workers=128) as executor:
     futures = [executor.submit(process_table, tm) for tm in table_mappings]
     results = [f.result() for f in concurrent.futures.as_completed(futures)]
 
