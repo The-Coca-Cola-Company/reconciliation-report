@@ -12,6 +12,7 @@ from email.mime.application import MIMEApplication
 import os
 import math
 import concurrent.futures
+from io import StringIO
  
 # ---- Table Mappings ----
 table_mappings = [
@@ -197,16 +198,17 @@ table_mappings = [
         "mdm_columns": "UNIQUE_ID as uniqueId, LAST_UPDATE_DATE as lastUpdateDate, SALES_POSITION_ID as salesPositionId, SALES_POSITION_NAME as salesPositionName, SALES_PERSON_ID as salesPersonId, SALES_PERSON_NAME as salesPersonName, SALES_PERSON_EMAIL as salesPersonEmail, SALES_PERSON_PHONE as salesPersonPhone, REV_CENTER_ID as revCenterId, REV_CENTER_NAME as revCenterIdName, P08_COST_CENTER as p08CostCenter, P08_COST_CENTER_DESC as p08CostCenterDesc, S4_COST_CENTER as s4CostCenter, PARENT_SALES_PSTN_ID as parentSalesPstnId, PARENT_POSITION_NAME as parentPostionName"
     }
 ]
+
 # The `table_mappings` list now contains all the required table configurations exactly as defined in the data provided.
 # ---- Email Config ----
 session_email = boto3.Session(profile_name='CCNA_INTSRVC_NonProd_INT_AppAdmin', region_name='us-west-2')
 client_email = session_email.client('ses')
 SENDER = "no-reply@coca-cola.com"
-#RECIPIENT = "vvempati@coca-cola.com"
 RECIPIENT = "cgdatafabricsupport@coca-cola.com"
+#RECIPIENT = "vvempati@coca-cola.com"
 CHARSET = "UTF-8"
  
-# ---- Timeframe ----t
+# ---- Timeframe ----tReconciliation
 eastern = pytz.timezone("America/New_York")
 yesterday_dt = datetime.now(eastern).date() - timedelta(days=1)
 naive_start = datetime.combine(yesterday_dt, time.min)
@@ -216,6 +218,88 @@ yesterday_end_dt = eastern.localize(naive_end)
 format1 = "%Y-%m-%d %H:%M:%S"
 format2 = "%Y-%m-%dT%H:%M:%S.%f"
 format3 = "%Y-%m-%d"
+del_table_df_counts = {}
+
+def compute_main_table_del_counts():
+    import boto3
+    import pandas as pd
+
+    global del_table_df_counts
+
+    session1 = boto3.Session(profile_name='CCNA_SharedServices_FAB_AppAdmin', region_name='us-west-2')
+    dynamodb = session1.resource('dynamodb')
+
+    main_configs = [
+        {
+            "main_name": "Customer360Outlet",
+            "del_name": "Customer360OutletDel",
+            "df_table": "ccna-fab-prod-Customer360Outlet",
+            "partition_key": ":stdCountryCode",
+            "df_sort_key_values": [
+                {"0": "CA"},
+                {"1": "US"},
+                {"2": "AU"},
+                {"3": "PE"},
+                {"4": "PR"},
+                {"5": "GU"},
+                {"6": "VI"}
+            ],
+            "df_index": "BYLASTUPDATEDATE",
+            "df_key_condition_expression": "stdCountryCode = :stdCountryCode AND lastUpdateDate BETWEEN :sdt AND :edt"
+        },
+        {
+            "main_name": "Customer360Hierarchy",
+            "del_name": "Customer360HierarchyDel",
+            "df_table": "ccna-fab-prod-Customer360Hierarchy",
+            "partition_key": ":hierarchySource",
+            "df_sort_key_values": [
+                {"0": "Concessionaire"},
+                {"1": "FSOP"},
+                {"2": "Mngd BY"},
+                {"3": "NABDB"},
+                {"4": "WAREHOUSE"}
+            ],
+            "df_index": "BYLASTUPDATEDATE",
+            "df_key_condition_expression": "hierarchySource = :hierarchySource AND lastUpdateDate BETWEEN :sdt AND :edt"
+        }
+    ]
+
+    for cfg in main_configs:
+        fab_table = dynamodb.Table(cfg["df_table"])
+        total_not_a = 0
+        for partition_value in cfg["df_sort_key_values"]:
+            for sort_key in partition_value.values():
+                expr_attr = {
+                    cfg["partition_key"]: sort_key,
+                    ':sdt': yesterday_start_dt.strftime(format2)[:-3] + 'Z',
+                    ':edt': yesterday_end_dt.strftime(format2)[:-3] + 'Z'
+                }
+                response = fab_table.query(
+                    IndexName=cfg["df_index"],
+                    KeyConditionExpression=cfg["df_key_condition_expression"],
+                    ExpressionAttributeValues=expr_attr,
+                    Limit=75000
+                )
+                items = response.get('Items', [])
+                flag_series = pd.Series([item.get('c360DelFlag', '').strip().upper() for item in items])
+                count_not_a = (flag_series != 'A').sum()
+                total_not_a += count_not_a
+                while 'LastEvaluatedKey' in response:
+                    response = fab_table.query(
+                        IndexName=cfg["df_index"],
+                        KeyConditionExpression=cfg["df_key_condition_expression"],
+                        ExpressionAttributeValues=expr_attr,
+                        Limit=75000,
+                        ExclusiveStartKey=response['LastEvaluatedKey']
+                    )
+                    items = response.get('Items', [])
+                    flag_series = pd.Series([item.get('c360DelFlag', '').strip().upper() for item in items])
+                    count_not_a = (flag_series != 'A').sum()
+                    total_not_a += count_not_a
+        del_table_df_counts[cfg["del_name"]] = total_not_a
+        print(f"[PRECOUNT] {cfg['main_name']} records with c360DelFlag != 'A' in last 24h: {total_not_a}")
+
+compute_main_table_del_counts()
  
 # ---- Excel Splitting Utility ----
 def split_and_write_excel(dfs_dict, base_filename, max_rows=1000000):
@@ -232,12 +316,14 @@ def split_and_write_excel(dfs_dict, base_filename, max_rows=1000000):
                 start = chunk_idx * max_rows
                 end = min((chunk_idx + 1) * max_rows, df.shape[0])
                 if start < end:
-                    df.iloc[start:end].to_excel(writer, sheet_name=sheet_name, index=False)
+                    # Truncate sheet name to 31 chars for Excel
+                    df.iloc[start:end].to_excel(writer, sheet_name=sheet_name[:31], index=False)
         files.append(fname)
     return files
  
 # ---- Per-table Processing Function ----
 def process_table(table_mapping):
+    global del_table_df_counts
     import pyodbc
     import boto3
     import pandas as pd
@@ -302,19 +388,29 @@ def process_table(table_mapping):
                         )
                     items = response.get('Items', [])
                     if name in ["Customer360Hierarchy", "Customer360Outlet"]:
-                        items = [item for item in items if item.get('c360DelFlag') == 'A'] #and not str(item.get('uniqueId', '')).upper().endswith('UNMATCHED')]
+                        items = [item for item in items if item.get('c360DelFlag') == 'A']
                     df_record.extend(items)
                     while 'LastEvaluatedKey' in response:
-                        response = datafabric_table.query(
-                            IndexName=table_mapping['df_index'],
-                            KeyConditionExpression=table_mapping['df_key_condition_expression'],
-                            ExpressionAttributeValues=expr_attr,
-                            Limit=75000,
-                            ExclusiveStartKey=response['LastEvaluatedKey']
-                        )
+                        if name == "Customer360PositionMarketId":
+                            response = datafabric_table.query(
+                                IndexName=table_mapping['df_index'],
+                                KeyConditionExpression="#status = :status AND lastUpdateDate BETWEEN :sdt AND :edt",
+                                ExpressionAttributeNames={"#status": "status"},
+                                ExpressionAttributeValues=expr_attr,
+                                Limit=75000,
+                                ExclusiveStartKey=response['LastEvaluatedKey']
+                            )
+                        else:
+                            response = datafabric_table.query(
+                                IndexName=table_mapping['df_index'],
+                                KeyConditionExpression=table_mapping['df_key_condition_expression'],
+                                ExpressionAttributeValues=expr_attr,
+                                Limit=75000,
+                                ExclusiveStartKey=response['LastEvaluatedKey']
+                            )
                         items = response.get('Items', [])
                         if name in ["Customer360Hierarchy", "Customer360Outlet"]:
-                            items = [item for item in items if item.get('c360DelFlag') == 'A']#and not str(item.get('uniqueId', '')).upper().endswith('UNMATCHED')]
+                            items = [item for item in items if item.get('c360DelFlag') == 'A']
                         df_record.extend(items)
             print(f"[DEBUG] Fetched {len(df_record)} records from DynamoDB for {name}.")
             df_record_count_last_24hrs = len(df_record)
@@ -330,13 +426,24 @@ def process_table(table_mapping):
         }]
         print(f"[DEBUG] DynamoDB counts for {name}: {df_resultset}")
  
-    df_resultset = [{
-        'Table Name': fab_table,
-        'Total Number of records': df_total_record_count,
-        'Total Number of records in last 24Hrs': len(df_record),
-        'NOW_TIME': datetime.now()
-    }]
-    print(f"[DEBUG] DynamoDB counts for {name}: {df_resultset}")
+    if name in ["Customer360OutletDel", "Customer360HierarchyDel"]:
+        global del_table_df_counts
+        df_24hr_count = del_table_df_counts.get(name, 0)
+        df_resultset = [{
+            'Table Name': fab_table,
+            'Total Number of records': df_total_record_count,
+            'Total Number of records in last 24Hrs': df_24hr_count,
+            'NOW_TIME': datetime.now()
+        }]
+        print(f"[DEBUG] DynamoDB counts for {name} (using precomputed c360DelFlag != 'A'): {df_resultset}")
+    else:
+        df_resultset = [{
+            'Table Name': fab_table,
+            'Total Number of records': df_total_record_count,
+            'Total Number of records in last 24Hrs': len(df_record),
+            'NOW_TIME': datetime.now()
+        }]
+        print(f"[DEBUG] DynamoDB counts for {name}: {df_resultset}")
  
     # ---- 2. Fetch MDM Data Next ----
     mdm_record = []
@@ -390,6 +497,10 @@ def process_table(table_mapping):
     if merge_key not in df_record_df.columns:
         df_record_df[merge_key] = None
  
+    # Ensure merge_key is string in both DataFrames to avoid merge dtype errors
+    mdm_record_df[merge_key] = mdm_record_df[merge_key].astype(str)
+    df_record_df[merge_key] = df_record_df[merge_key].astype(str)
+ 
     # ---- Find Differences ----
     if mdm_record_df.empty and df_record_df.empty:
         diff_record = pd.DataFrame(columns=[merge_key, 'lastUpdateDate'])
@@ -420,15 +531,19 @@ def process_table(table_mapping):
     for excel_file in excel_files:
         dest_path = os.path.join(sharepoint_local_path, os.path.basename(excel_file))
         try:
+            # --- Delete existing file if present ---
+            if os.path.exists(dest_path):
+                os.remove(dest_path)
+                print(f"[INFO] Deleted existing file at destination: {dest_path}")
             shutil.copy2(excel_file, dest_path)
             print(f"[INFO] Copied {excel_file} to SharePoint folder: {dest_path}")
         except Exception as e:
             print(f"[ERROR] Failed to copy {excel_file} to SharePoint: {e}")
  
     # ---- Prepare HTML for Email ----
-    mdm_html1 = pd.DataFrame(data=mdm_resultset).to_html()
+    mdm_html1 = pd.DataFrame(data=mdm_resultset).to_html(index=False)
     if name not in ["Customer360OutletDel", "Customer360HierarchyDel"]:
-        df_html1 = pd.DataFrame(data=df_resultset).to_html()
+        df_html1 = pd.DataFrame(data=df_resultset).to_html(index=False)
         html_section = f"""
         <h2 style="color:black">{name}</h2>
         <h3 style="color:black">Record Count in MDM View:</h3>
@@ -448,20 +563,20 @@ def process_table(table_mapping):
     # ---- Subject Color Logic ----
     mdm_count = mdm_resultset[1]['RECORD_COUNT'] if len(mdm_resultset) > 1 else 0
     df_count = df_resultset[0]['Total Number of records in last 24Hrs'] if len(df_resultset) > 0 else 0
-
+ 
 # Avoid divide-by-zero by ensuring average_count is not zero
     average_count = (mdm_count + df_count) / 2 if (mdm_count + df_count) != 0 else 1  
-
+ 
 # Calculate percentage difference
     percentage_difference = abs(mdm_count - df_count) / average_count * 100
-
+ 
     if mdm_count == 0:
        status = "Zero Records In MDM"
     elif df_count >= mdm_count:
        status = "GREEN"
-    elif percentage_difference <= 25:
+    elif percentage_difference <= 10:
        status = "GREEN"
-    elif percentage_difference <= 50:
+    elif percentage_difference <= 15:
       status = "AMBER"
     else:
       status = "RED"
@@ -474,21 +589,31 @@ def process_table(table_mapping):
  
 # ---- Main Parallel Execution ----
 main_tables = ["LegacyAcn", "Customer360Hierarchy", "Customer360Outlet", "Customer360Acn"]
-
+ 
 all_html_sections = []
 all_excel_files = []
 subject_details = []
 subject_status = "GREEN"
-
+ 
 error_occurred = False
 main_table_statuses = []
-
-# This block must be present!
+ 
+# Store actual resultsets for summary extraction
+table_resultsets = {}
+ 
+# --- FIX: Use a dict to map table name to result ---
+results_by_name = {}
+ 
 with concurrent.futures.ThreadPoolExecutor(max_workers=128) as executor:
-    futures = [executor.submit(process_table, tm) for tm in table_mappings]
-    results = [f.result() for f in concurrent.futures.as_completed(futures)]
-
-for result, tm in zip(results, table_mappings):
+    future_to_name = {executor.submit(process_table, tm): tm['name'] for tm in table_mappings}
+    for future in concurrent.futures.as_completed(future_to_name):
+        name = future_to_name[future]
+        result = future.result()
+        results_by_name[name] = result
+ 
+for tm in table_mappings:
+    name = tm['name']
+    result = results_by_name.get(name)
     if result is None:
         error_occurred = True
         continue
@@ -496,10 +621,18 @@ for result, tm in zip(results, table_mappings):
     all_html_sections.append(html_section)
     all_excel_files.extend(excel_files)
     subject_details.append(subject_detail)
-    # Only consider main tables for overall status
-    if tm['name'] in main_tables:
+    if name in main_tables:
         main_table_statuses.append(status)
-
+ 
+    # --- FIX: Extract actual resultsets for summary table for each table ---
+    try:
+        mdm_resultset = pd.read_html(StringIO(html_section))[0]
+        df_resultset = pd.read_html(StringIO(html_section))[1] if "Record Count in Data Fabric" in html_section else pd.DataFrame()
+    except Exception:
+        mdm_resultset = pd.DataFrame()
+        df_resultset = pd.DataFrame()
+    table_resultsets[name] = (mdm_resultset, df_resultset, status)
+ 
 # Determine overall status based only on main tables
 if "RED" in main_table_statuses:
     subject_status = "RED"
@@ -507,37 +640,182 @@ elif "AMBER" in main_table_statuses:
     subject_status = "AMBER"
 else:
     subject_status = "GREEN"
-
+ 
 # ---- Send Combined Email ----
 if error_occurred:
     print("[ERROR] Errors occurred during processing. Email will NOT be sent.")
 else:
     table_names = [tm['name'] for tm in table_mappings]
     table_names_str = ', '.join(table_names)
+ 
+    # 1. Professional subject
+    SUBJECT = f"Reconciliation Report - {yesterday_dt.strftime(format3)}"
+ 
+    # 2. Build summary table and variance summary for all tables
+    summary_rows = []
+    variance_summaries = []
+    sl_no = 1
+    VARIANCE_THRESHOLD = 5  # Only show in attention if variance > 5%
+ 
+    for tm in table_mappings:
+        name = tm['name']
+        mdm_resultset, df_resultset, status = table_resultsets.get(name, (pd.DataFrame(), pd.DataFrame(), ""))
+        mdm_full = mdm_24h = df_full = df_24h = 0
+        if not mdm_resultset.empty and 'TYPE' in mdm_resultset.columns and 'RECORD_COUNT' in mdm_resultset.columns:
+            if 'Full Table Count' in mdm_resultset['TYPE'].values:
+                mdm_full = mdm_resultset.loc[mdm_resultset['TYPE'] == 'Full Table Count', 'RECORD_COUNT'].values[0]
+            if 'Last 24 Hours Record Count' in mdm_resultset['TYPE'].values:
+                mdm_24h = mdm_resultset.loc[mdm_resultset['TYPE'] == 'Last 24 Hours Record Count', 'RECORD_COUNT'].values[0]
+        if not df_resultset.empty:
+            if 'Total Number of records' in df_resultset.columns:
+                df_full = df_resultset['Total Number of records'].values[0]
+            if 'Total Number of records in last 24Hrs' in df_resultset.columns:
+                df_24h = df_resultset['Total Number of records in last 24Hrs'].values[0]
+ 
+        # Special handling for Del tables
+        if name in ["Customer360OutletDel", "Customer360HierarchyDel"]:
+            df_full = 0
+            df_24h = del_table_df_counts.get(name, 0)
+            # Fix: If both are zero, set GREEN
+            if mdm_24h == 0 and df_24h == 0:
+                sync_status = "GREEN"
+            elif df_24h == 0:
+                sync_status = "RED"
+            elif df_24h < 10:
+                sync_status = "YELLOW"
+            else:
+                sync_status = "GREEN"
+            percent_var = ""
+        else:
+            try:
+                mdm_24h_int = int(mdm_24h)
+                df_24h_int = int(df_24h)
+                if mdm_24h_int == 0 and df_24h_int == 0:
+                    percent_var = 0
+                elif mdm_24h_int == 0:
+                    percent_var = 100
+                else:
+                    percent_var = round(abs(mdm_24h_int - df_24h_int) / mdm_24h_int * 100, 2)
+            except Exception:
+                percent_var = ""
 
-    SUBJECT = f"{subject_status}: Reconciliation Report For Tables: {table_names_str} {yesterday_dt.strftime(format3)}"
+            try:
+                if mdm_24h_int == 0 and df_24h_int == 0:
+                    sync_status = "GREEN"
+                elif percent_var <= 5:
+                    sync_status = "GREEN"
+                elif percent_var <= 15:
+                    sync_status = "YELLOW"
+                else:
+                    sync_status = "RED"
+            except Exception:
+                sync_status = ""
+ 
+        summary_rows.append([
+            sl_no, name, mdm_full, df_full, mdm_24h, df_24h, sync_status
+        ])
+ 
+        # Only include in variance summary if:
+        # - Not a Del table
+        # - NOT SYNC
+        # - Variance above threshold and not 0.0%
+        if (
+            "Del" not in name
+            and sync_status == "NOT SYNC"
+            and isinstance(percent_var, (int, float))
+            and percent_var > VARIANCE_THRESHOLD
+        ):
+            variance_summaries.append(
+                f"<li><b>{name}</b>: {percent_var}% variance between MDM and Data Fabric 24hr counts (MDM: {mdm_24h}, DF: {df_24h})</li>"
+            )
+        sl_no += 1
+ 
+    # --- Build summary table with row coloring except Sl.No and Table Name ---
+    summary_heading_html = "<h2 style='color:#1a237e; text-align:center;'>Reconciliation Summary Table</h2>"
+ 
+    summary_table_html = """
+    <table border="1" style="border-collapse: collapse; width: 95%; margin: 0 auto; font-size: 14px;">
+        <tr>
+            <th>Sl.No</th>
+            <th>Table Name</th>
+            <th>MDM Count (Full Table Count)</th>
+            <th>DF Count (Full Table Count)</th>
+            <th>MDM Count (Last 24Hrs)</th>
+            <th>DF Count (Last 24 Hrs)</th>
+            <th>Last 24Hrs Sync Status</th>
+        </tr>
+    """
+    for row in summary_rows:
+        status = str(row[6]).upper()
+        if status == "GREEN":
+            bgcolor = "#c8e6c9"
+            fontcolor = "#388e3c"
+        elif status == "YELLOW":
+            bgcolor = "#fff9c4"
+            fontcolor = "#fbc02d"
+        elif status == "RED":
+            bgcolor = "#ffcdd2"
+            fontcolor = "#d32f2f"
+        elif status == "NA":
+            bgcolor = "#eeeeee"
+            fontcolor = "#757575"
+        else:
+            bgcolor = "#ffffff"
+            fontcolor = "#222"
+
+        summary_table_html += "<tr>"
+        # First column (Sl.No) with no color
+        summary_table_html += f"<td>{row[0]}</td>"
+        # All other columns with color
+        for col in row[1:]:
+            summary_table_html += (
+                f"<td bgcolor='{bgcolor}' style='background-color:{bgcolor}; color:{fontcolor}; font-weight:bold;'>{col}</td>"
+            )
+        summary_table_html += "</tr>"
+ 
+    summary_table_html += "</table><br>"
+ 
+    # --- OneDrive Link Section ---
+    sharepoint_local_path = r"C:\Users\Z20419\OneDrive - The Coca-Cola Company\Data Fabric and ESP Support - General\DailyReconciliationReportDumps"
+    onedrive_url = "file:///" + sharepoint_local_path.replace("\\", "/")  # For clickable file link in Outlook
+ 
+    onedrive_html = f"""
+    <div style="margin: 30px 0 10px 0; text-align:center;">
+        <span style="font-size:16px; color:#1565c0; font-weight:bold;">&#128193; Excel Reports Location:</span><br>
+        <a href="{onedrive_url}" style="font-size:15px; color:#0d47a1; text-decoration:underline;">
+            {sharepoint_local_path}
+        </a>
+        <div style="font-size:13px; color:#555; margin-top:5px;">
+            (All reconciliation Excel files for this run are available in the above OneDrive folder.)
+        </div>
+    </div>
+    """
+ 
+    # ---- Email body (no quick summary, no attachments) ----
     BODY_HTML = f"""
     <html>
     <head>
     <style>
         body {{
             font-family: Arial, sans-serif;
+            font-size: 15px;
+            color: #222;
+            margin: 0;
+            padding: 0;
         }}
         h1 {{
             text-align: center;
             color: #1a237e;
+            margin-bottom: 10px;
         }}
-        h2 {{
-            text-align: left;
+        .section-title {{
             color: #1565c0;
-        }}
-        h3 {{
-            text-align: left;
-            color: #ef6c00;
+            margin-top: 30px;
+            margin-bottom: 10px;
         }}
         table {{
             border-collapse: collapse;
-            margin: 0 auto;
+            margin: 0 auto 30px auto;
             width: 90%;
         }}
         th, td {{
@@ -549,26 +827,31 @@ else:
             background-color: #f2f2f2;
             color: #0d47a1;
         }}
-        tr:nth-child(even) {{
-            background-color: #f9f9f9;
+        ul {{
+            margin: 0 0 0 20px;
+            padding: 0;
         }}
-        tr:hover {{
-            background-color: #e3f2fd;
-        }}
-        p {{
-            color: brown;
+        .signature {{
+            color: #444;
             text-align: left;
-            margin-left: 10%;
+            margin: 40px auto 0 auto;
+            font-size: 14px;
+            width: 90%;
+            max-width: 900px;
         }}
     </style>
     </head>
     <body>
-    <h1>{SUBJECT}</h1>
-    {''.join(all_html_sections)}
-    <p>Thanks,<br>
-    Data Fabric Support Team<br>
-    cgdatafabricsupport@coca-cola.com<br>
-    </p>
+        <h1>NAOU Data Fabric Daily Reconciliation for {yesterday_dt.strftime(format3)}</h1>
+        {summary_heading_html}
+        {summary_table_html}
+        {onedrive_html}
+        <div class="signature">
+            <br>
+            Thanks,<br>
+            <b>NAOU Middleware Data Fabric Support</b><br>
+            cgdatafabricsupport@coca-cola.com
+        </div>
     </body>
     </html>
     """
@@ -583,49 +866,37 @@ else:
     msg_body.attach(textpart)
     msg.attach(msg_body)
  
-    # Attach Excel files one by one, checking total size
-    attached_files = []
-    max_email_size = 10485760  # 10 MB
-    for excel_file in all_excel_files:
-        with open(excel_file, 'rb') as f:
-            attachment = MIMEApplication(f.read())
-        attachment.add_header('Content-Disposition', 'attachment', filename=os.path.basename(excel_file))
-        msg.attach(attachment)
-        if len(msg.as_string()) > max_email_size:
-            msg.get_payload().pop()  # Remove last attachment
-            break
-        attached_files.append(excel_file)
+    print("[DEBUG] Sending email without attachments (files are on OneDrive)...")
+    try:
+        response = client_email.send_email(
+            Source=SENDER,
+            Destination={'ToAddresses': [RECIPIENT]},
+            Message={
+                'Subject': {'Data': SUBJECT, 'Charset': CHARSET},
+                'Body': {'Html': {'Data': BODY_HTML, 'Charset': CHARSET}}
+            }
+        )
+        print(f"[INFO] Email sent! Message ID:", response['MessageId'])
+    except ClientError as e:
+        print("[ERROR] SES ClientError:", e.response['Error']['Message'])
+    except Exception as e:
+        print("[ERROR] SES Exception:", e)
  
-    email_body_size = len(msg.as_string())
-    print(f"[DEBUG] Total email size (bytes): {email_body_size}")
- 
-    if attached_files:
-        try:
-            response = client_email.send_raw_email(
-                Source=SENDER,
-                Destinations=[RECIPIENT],
-                RawMessage={'Data': msg.as_string()}
-            )
-            print(f"[INFO] Email sent! Message ID:", response['MessageId'])
-        except ClientError as e:
-            print("[ERROR] SES ClientError:", e.response['Error']['Message'])
-        except Exception as e:
-            print("[ERROR] SES Exception:", e)
-    else:
-        print("[WARN] Email body size exceeds the limit. Sending email without attachment.")
-        try:
-            response = client_email.send_email(
-                Source=SENDER,
-                Destination={'ToAddresses': [RECIPIENT]},
-                Message={
-                    'Subject': {'Data': SUBJECT, 'Charset': CHARSET},
-                    'Body': {'Html': {'Data': BODY_HTML, 'Charset': CHARSET}}
-                }
-            )
-            print(f"[INFO] Email sent without attachment! Message ID:", response['MessageId'])
-        except ClientError as e:
-            print("[ERROR] SES ClientError:", e.response['Error']['Message'])
-        except Exception as e:
-            print("[ERROR] SES Exception:", e)
-
 print("Main table statuses:", main_table_statuses)
+ 
+# ---- Print summary table to terminal ----
+summary_df = pd.DataFrame(
+    summary_rows,
+    columns=[
+        "Sl.No",
+        "Table Name",
+        "MDM Count (Full Table Count)",
+        "DF Count (Full Table Count)",
+        "MDM Count (Last 24Hrs)",
+        "DF Count (Last 24 Hrs)",
+        "Last 24Hrs Sync Status"
+    ]
+)
+print("\n==== Reconciliation Summary Table ====")
+print(summary_df.to_string(index=False))
+print("======================================\n")
