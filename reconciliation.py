@@ -76,24 +76,24 @@ table_mappings = [
         "merge_key": "uniqueId",
         "mdm_columns": "UNIQUE_ID as uniqueId, LAST_UPDATE_DATE as lastUpdateDate, SC as sc, TC as tc, TRADE_CHANNEL as tradeChannel, AC as ac, ACTIVITY_CLUSTER as activityCluster, CO as co, CHANNEL_ORG as channelOrg, SUB_TRADE_CHANNEL as subTradeChannel"
     },
-    {
-        "name": "Customer360HierMap",
-        "df_table": "ccna-fab-prod-Customer360HierMap",
-        "mdm_table": "V_DF_CUSTOMER360_HIER_MAP",
-        "mdm_filter": "Last_Update_Date",
-        "df_key_condition_expression": "hierarchySource = :hierarchySource AND lastUpdateDate BETWEEN :sdt AND :edt",
-        "df_sort_key_values": [
-            {"0": "WAREHOUSE"},
-            {"1": "NABDB"},
-            {"2": "Mngd BY"},
-            {"3": "Concessionaire"},
-            {"4": "FSOP"}
-        ],
-        "df_index": "BYLASTUPDATEDATE",
-        "partition_key": ":hierarchySource",
-        "merge_key": "uniqueId",
-        "mdm_columns": "UNIQUE_ID as uniqueId, LAST_UPDATE_DATE as lastUpdateDate, FSOP_ID as fsopId, FSOP_NAME as fsopName, CBS_ACCOUNT_NO as cbsAccountNo, CBS_ACCOUNT_NAME as cbsAccountName, FSOP_MAPPING_LEVEL as fsopMappingLevel, CBS_MAPPING_LEVEL as cbsMappingLevel, NABDB_PE_ID as nabdbPeId, NABDB_PE_NAME as nabdbPeName, HIERARCHY_SOURCE as hierarchySource, MAPPING_DECISION as mappingDecision, ORPHAN_OUTLET_FLAG as orphanOutletFlag, FSOP_BP_ID as fsopBpId, LINE_OF_BUSINESS as lineOfBusiness"
-    },
+    # {
+    #     "name": "Customer360HierMap",
+    #     "df_table": "ccna-fab-prod-Customer360HierMap",
+    #     "mdm_table": "V_DF_CUSTOMER360_HIER_MAP",
+    #     "mdm_filter": "Last_Update_Date",
+    #     "df_key_condition_expression": "hierarchySource = :hierarchySource AND lastUpdateDate BETWEEN :sdt AND :edt",
+    #     "df_sort_key_values": [
+    #         {"0": "WAREHOUSE"},
+    #         {"1": "NABDB"},
+    #         {"2": "Mngd BY"},
+    #         {"3": "Concessionaire"},
+    #         {"4": "FSOP"}
+    #     ],
+    #     "df_index": "BYLASTUPDATEDATE",
+    #     "partition_key": ":hierarchySource",
+    #     "merge_key": "uniqueId",
+    #     "mdm_columns": "UNIQUE_ID as uniqueId, LAST_UPDATE_DATE as lastUpdateDate, FSOP_ID as fsopId, FSOP_NAME as fsopName, CBS_ACCOUNT_NO as cbsAccountNo, CBS_ACCOUNT_NAME as cbsAccountName, FSOP_MAPPING_LEVEL as fsopMappingLevel, CBS_MAPPING_LEVEL as cbsMappingLevel, NABDB_PE_ID as nabdbPeId, NABDB_PE_NAME as nabdbPeName, HIERARCHY_SOURCE as hierarchySource, MAPPING_DECISION as mappingDecision, ORPHAN_OUTLET_FLAG as orphanOutletFlag, FSOP_BP_ID as fsopBpId, LINE_OF_BUSINESS as lineOfBusiness"
+    # },
     {
         "name": "Customer360Outlet",
         "df_table": "ccna-fab-prod-Customer360Outlet",
@@ -147,55 +147,6 @@ table_mappings = [
         "partition_key": ":hierarchySource",
         "merge_key": "uniqueId",
         "mdm_columns": "UNIQUE_ID as uniqueId, LAST_UPDATE_DATE as lastUpdateDate, NODE_ID as nodeId, PARENT_NODE_ID as parentNodeId, NODE_LEVEL_NAME as nodeLevelName, NODE_DESCRIPTION as nodeDescription, STREET as street, CITY as city, STATE_CD as stateCode, ZIP as zip, COUNTRY_CD as countryCode, BP_NUMBER as bpNumber, BP_VALID_FROM as bpValidFrom, BP_VALID_TO as bpValidTo, HIER_IND_TYPE_CODE as hierIndTypeCode, SALES_ORG as salesOrg, DIVISION as division, DISTRIBUTION_CHNNL as distributionChannel, HIERARCHY_SOURCE as hierarchySource, LINE_OF_BUSINESS as lineOfBusiness, SUB_TRADE_CHANNEL as subTradeChannel, CUSTOMER_ID as customerId, STATUS as status, STATUS_REASON as statusReason"
-    },
-    {
-        "name": "Customer360PositionMarketId",
-        "df_table": "ccna-fab-prod-Customer360PositionMarketId",
-        "mdm_table": "V_DF_CUSTOMER360_POSITION_MARKETID",
-        "mdm_filter": "Last_Update_Date",
-        "df_key_condition_expression": "status = :status AND lastUpdateDate BETWEEN :sdt AND :edt",
-        "df_sort_key_values": [
-            {"0": "A"},
-            {"1": "I"}
-        ],
-        "df_index": "BYLASTUPDATEDATE",
-        "partition_key": ":status",
-        "merge_key": "uniqueId",
-        "mdm_columns": "UNIQUE_ID as uniqueId, LAST_UPDATE_DATE as lastUpdateDate, SALES_PSTN_ID as salesPstnId, LEGACY_MARKET_ID as legacyMarketId, STATUS as status"
-    },
-    {
-        "name": "Customer360SalesPosition",
-        "df_table": "ccna-fab-prod-Customer360SalesPosition",
-        "mdm_table": "V_DF_CUSTOMER360_SALES_POSITION",
-        "mdm_filter": "Last_Update_Date",
-        "df_key_condition_expression": "revCenterId = :revCenterId AND lastUpdateDate BETWEEN :sdt AND :edt",
-        "df_sort_key_values": [
-            {"0": "RC1"},
-            {"1": "RC10"},
-            {"2": "RC11"},
-            {"3": "RC12"},
-            {"4": "RC13"},
-            {"5": "RC14"},
-            {"6": "RC15"},
-            {"7": "RC17"},
-            {"8": "RC18"},
-            {"9": "RC2"},
-            {"10": "RC20"},
-            {"11": "RC24"},
-            {"12": "RC25"},
-            {"13": "RC26"},
-            {"14": "RC3"},
-            {"15": "RC4"},
-            {"16": "RC5"},
-            {"17": "RC6"},
-            {"18": "RC7"},
-            {"19": "RC8"},
-            {"20": "RC9"}
-        ],
-        "df_index": "BYLASTUPDATEDATE",
-        "partition_key": ":revCenterId",
-        "merge_key": "uniqueId",
-        "mdm_columns": "UNIQUE_ID as uniqueId, LAST_UPDATE_DATE as lastUpdateDate, SALES_POSITION_ID as salesPositionId, SALES_POSITION_NAME as salesPositionName, SALES_PERSON_ID as salesPersonId, SALES_PERSON_NAME as salesPersonName, SALES_PERSON_EMAIL as salesPersonEmail, SALES_PERSON_PHONE as salesPersonPhone, REV_CENTER_ID as revCenterId, REV_CENTER_NAME as revCenterIdName, P08_COST_CENTER as p08CostCenter, P08_COST_CENTER_DESC as p08CostCenterDesc, S4_COST_CENTER as s4CostCenter, PARENT_SALES_PSTN_ID as parentSalesPstnId, PARENT_POSITION_NAME as parentPostionName"
     }
 ]
 
@@ -282,7 +233,7 @@ def compute_main_table_del_counts():
                 )
                 items = response.get('Items', [])
                 flag_series = pd.Series([item.get('c360DelFlag', '').strip().upper() for item in items])
-                count_not_a = (flag_series != 'A').sum()
+                count_not_a = (flag_series == 'D').sum()
                 total_not_a += count_not_a
                 while 'LastEvaluatedKey' in response:
                     response = fab_table.query(
@@ -294,10 +245,10 @@ def compute_main_table_del_counts():
                     )
                     items = response.get('Items', [])
                     flag_series = pd.Series([item.get('c360DelFlag', '').strip().upper() for item in items])
-                    count_not_a = (flag_series != 'A').sum()
+                    count_not_a = (flag_series == 'D').sum()
                     total_not_a += count_not_a
         del_table_df_counts[cfg["del_name"]] = total_not_a
-        print(f"[PRECOUNT] {cfg['main_name']} records with c360DelFlag != 'A' in last 24h: {total_not_a}")
+        print(f"[PRECOUNT] {cfg['main_name']} records with c360DelFlag = 'A' in last 24h: {total_not_a}")
 
 compute_main_table_del_counts()
  
@@ -604,7 +555,7 @@ table_resultsets = {}
 # --- FIX: Use a dict to map table name to result ---
 results_by_name = {}
  
-with concurrent.futures.ThreadPoolExecutor(max_workers=128) as executor:
+with concurrent.futures.ThreadPoolExecutor(max_workers=96) as executor:
     future_to_name = {executor.submit(process_table, tm): tm['name'] for tm in table_mappings}
     for future in concurrent.futures.as_completed(future_to_name):
         name = future_to_name[future]
