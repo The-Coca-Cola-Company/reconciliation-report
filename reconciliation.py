@@ -287,7 +287,7 @@ def process_table(table_mapping):
         'Server=zwpmdmd5001.NA.KO.COM;'
         'Database=CMX_PUBLISH;'
         'UID=_datafabric_ro;'
-        'PWD=Mdmpr#admin'
+        'PWD=###########'
     )
     cursor = connection.cursor()
     session1 = boto3.Session(profile_name='CCNA_SharedServices_FAB_AppAdmin', region_name='us-west-2')
@@ -555,7 +555,7 @@ table_resultsets = {}
 # --- FIX: Use a dict to map table name to result ---
 results_by_name = {}
  
-with concurrent.futures.ThreadPoolExecutor(max_workers=96) as executor:
+with concurrent.futures.ThreadPoolExecutor(max_workers=64) as executor:
     future_to_name = {executor.submit(process_table, tm): tm['name'] for tm in table_mappings}
     for future in concurrent.futures.as_completed(future_to_name):
         name = future_to_name[future]
@@ -851,3 +851,4 @@ summary_df = pd.DataFrame(
 print("\n==== Reconciliation Summary Table ====")
 print(summary_df.to_string(index=False))
 print("======================================\n")
+
