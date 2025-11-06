@@ -149,14 +149,14 @@ table_mappings = [
         "mdm_columns": "UNIQUE_ID as uniqueId, LAST_UPDATE_DATE as lastUpdateDate, NODE_ID as nodeId, PARENT_NODE_ID as parentNodeId, NODE_LEVEL_NAME as nodeLevelName, NODE_DESCRIPTION as nodeDescription, STREET as street, CITY as city, STATE_CD as stateCode, ZIP as zip, COUNTRY_CD as countryCode, BP_NUMBER as bpNumber, BP_VALID_FROM as bpValidFrom, BP_VALID_TO as bpValidTo, HIER_IND_TYPE_CODE as hierIndTypeCode, SALES_ORG as salesOrg, DIVISION as division, DISTRIBUTION_CHNNL as distributionChannel, HIERARCHY_SOURCE as hierarchySource, LINE_OF_BUSINESS as lineOfBusiness, SUB_TRADE_CHANNEL as subTradeChannel, CUSTOMER_ID as customerId, STATUS as status, STATUS_REASON as statusReason"
     }
 ]
-
+ 
 # The `table_mappings` list now contains all the required table configurations exactly as defined in the data provided.
 # ---- Email Config ----
 session_email = boto3.Session(profile_name='CCNA_INTSRVC_NonProd_INT_AppAdmin', region_name='us-west-2')
 client_email = session_email.client('ses')
 SENDER = "no-reply@coca-cola.com"
 RECIPIENT = "cgdatafabricsupport@coca-cola.com"
-#RECIPIENT = "vvempati@coca-cola.com"
+#RECIPIENT = "ldendukuri@coca-cola.com"
 CHARSET = "UTF-8"
  
 # ---- Timeframe ----tReconciliation
@@ -170,16 +170,16 @@ format1 = "%Y-%m-%d %H:%M:%S"
 format2 = "%Y-%m-%dT%H:%M:%S.%f"
 format3 = "%Y-%m-%d"
 del_table_df_counts = {}
-
+ 
 def compute_main_table_del_counts():
     import boto3
     import pandas as pd
-
+ 
     global del_table_df_counts
-
+ 
     session1 = boto3.Session(profile_name='CCNA_SharedServices_FAB_AppAdmin', region_name='us-west-2')
     dynamodb = session1.resource('dynamodb')
-
+ 
     main_configs = [
         {
             "main_name": "Customer360Outlet",
@@ -214,7 +214,7 @@ def compute_main_table_del_counts():
             "df_key_condition_expression": "hierarchySource = :hierarchySource AND lastUpdateDate BETWEEN :sdt AND :edt"
         }
     ]
-
+ 
     for cfg in main_configs:
         fab_table = dynamodb.Table(cfg["df_table"])
         total_not_a = 0
@@ -249,7 +249,7 @@ def compute_main_table_del_counts():
                     total_not_a += count_not_a
         del_table_df_counts[cfg["del_name"]] = total_not_a
         print(f"[PRECOUNT] {cfg['main_name']} records with c360DelFlag = 'A' in last 24h: {total_not_a}")
-
+ 
 compute_main_table_del_counts()
  
 # ---- Excel Splitting Utility ----
@@ -287,7 +287,7 @@ def process_table(table_mapping):
         'Server=zwpmdmd5001.NA.KO.COM;'
         'Database=CMX_PUBLISH;'
         'UID=_datafabric_ro;'
-        'PWD=###########'
+        'PWD=Mdmpr#admin'
     )
     cursor = connection.cursor()
     session1 = boto3.Session(profile_name='CCNA_SharedServices_FAB_AppAdmin', region_name='us-west-2')
@@ -478,7 +478,7 @@ def process_table(table_mapping):
     )
     print(f"[DEBUG] Excel files for {name}: {excel_files}")
     all_excel_files.extend(excel_files)
-    sharepoint_local_path = r"C:\Users\Z20419\OneDrive - The Coca-Cola Company\Data Fabric and ESP Support - General\DailyReconciliationReportDumps"
+    sharepoint_local_path = r"C:\Users\Z22461\The Coca-Cola Company\Data Fabric and ESP Support - DailyReconciliationReportDumps"
     for excel_file in excel_files:
         dest_path = os.path.join(sharepoint_local_path, os.path.basename(excel_file))
         try:
@@ -555,7 +555,7 @@ table_resultsets = {}
 # --- FIX: Use a dict to map table name to result ---
 results_by_name = {}
  
-with concurrent.futures.ThreadPoolExecutor(max_workers=64) as executor:
+with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
     future_to_name = {executor.submit(process_table, tm): tm['name'] for tm in table_mappings}
     for future in concurrent.futures.as_completed(future_to_name):
         name = future_to_name[future]
@@ -649,7 +649,7 @@ else:
                     percent_var = round(abs(mdm_24h_int - df_24h_int) / mdm_24h_int * 100, 2)
             except Exception:
                 percent_var = ""
-
+ 
             try:
                 if mdm_24h_int == 0 and df_24h_int == 0:
                     sync_status = "GREEN"
@@ -713,7 +713,7 @@ else:
         else:
             bgcolor = "#ffffff"
             fontcolor = "#222"
-
+ 
         summary_table_html += "<tr>"
         # First column (Sl.No) with no color
         summary_table_html += f"<td>{row[0]}</td>"
@@ -727,7 +727,7 @@ else:
     summary_table_html += "</table><br>"
  
     # --- OneDrive Link Section ---
-    sharepoint_local_path = r"C:\Users\Z20419\OneDrive - The Coca-Cola Company\Data Fabric and ESP Support - General\DailyReconciliationReportDumps"
+    sharepoint_local_path = r"C:\Users\Z22461\The Coca-Cola Company\Data Fabric and ESP Support - DailyReconciliationReportDumps"
     onedrive_url = "file:///" + sharepoint_local_path.replace("\\", "/")  # For clickable file link in Outlook
  
     onedrive_html = f"""
@@ -851,4 +851,5 @@ summary_df = pd.DataFrame(
 print("\n==== Reconciliation Summary Table ====")
 print(summary_df.to_string(index=False))
 print("======================================\n")
-
+ 
+ 
